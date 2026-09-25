@@ -1,0 +1,2 @@
+-P ubuntu-latest=-self-hosted
+--workflows .github/workflows/ci.yml

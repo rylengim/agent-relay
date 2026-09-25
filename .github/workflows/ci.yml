@@ -1,0 +1,32 @@
+name: Test, build, and deploy Agent Relay
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv on the hosted runner
+        if: ${{ !env.ACT }}
+        run: python3 -m pip install uv==0.12.19
+      - name: Test starter and real HTTP flow against PostgreSQL
+        run: bash scripts/ci-test.sh
+      - name: Build a unique image after successful tests
+        id: image
+        shell: bash
+        run: |
+          tag="$(git rev-parse --short HEAD)-$(date +%s)-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
+          image="agent-relay:$tag"
+          docker build -t "$image" .
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+      - name: Deploy to the existing local kind cluster and wait for rollout
+        if: ${{ env.ACT == 'true' && github.event_name == 'workflow_dispatch' }}
+        run: bash scripts/deploy-kind.sh --context kind-agent-relay --image '${{ steps.image.outputs.name }}'
