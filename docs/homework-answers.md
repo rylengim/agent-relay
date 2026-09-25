@@ -21,10 +21,16 @@ submission page.
 
 ## Submission status
 
-Pending. These are prepared answers, not confirmation that the platform accepted
-them. At inspection on 25 September 2026, the platform displayed a 25 September, 02:00 Europe/Moscow
-deadline (24 September, 23:00 UTC) and said late submissions remained open until scoring closed. The
-platform's current status governs whether submission remains possible.
+**Submitted and saved on 25 September 2026 at 22:33 Europe/Moscow.**
+The signed-in course platform displayed `STATUS: SUBMITTED` and confirmed that
+all six answers and the repository URL were saved. The submission was accepted
+while the form remained open after its deadline. Scoring is pending until the
+form closes.
+
+Published repository: https://github.com/rylengim/agent-relay
+
+Optional lecture/homework time, social links, and FAQ contribution fields were
+left empty; no estimates or unrelated submissions were invented.
 
 ## Verification record
 
@@ -35,5 +41,4 @@ instances, PostgreSQL data surviving a Compose restart, and successful v1/v2
 `act` deployments. A deliberately introduced temporary test failure stopped the
 workflow before build/deployment and left the running image unchanged; the
 temporary failure was removed afterward. The v2 dashboard and a persisted
-completed result were inspected in the browser. Submission remains a separate
-pending step.
+completed result were inspected in the browser. The saved submission is confirmed above.

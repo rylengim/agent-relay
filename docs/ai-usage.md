@@ -71,7 +71,8 @@ workflow stopped with one failed and 15 passed tests before image build or
 deployment; the running image stayed unchanged. The temporary failure was
 removed after the check. [Execution details](verification.md) and
 [submission status](homework-answers.md) are recorded separately. The course
-submission was still pending when this report was updated.
+platform confirmed the six answers and repository URL saved at 22:33
+Europe/Moscow on 25 September 2026.
 
 Database passwords, bearer/claim tokens, kubeconfig contents, and temporary
 dashboard credentials are excluded from published evidence and source control.
