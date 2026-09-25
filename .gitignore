@@ -6,3 +6,10 @@
 __pycache__/
 .pytest_cache/
 *-credentials.json
+.env
+.env.*
+!.env.example
+.act
+*.log
+kubeconfig*
+relay-acceptance-*.json
