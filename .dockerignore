@@ -1,0 +1,14 @@
+.git
+.venv
+.env*
+*.db*
+*-credentials.json
+__pycache__
+.pytest_cache
+.ruff_cache
+docs
+integration
+k8s
+.github
+scripts
+relay-acceptance-*.json

@@ -1,0 +1,34 @@
+name: agent-relay
+services:
+  api:
+    build: .
+    image: agent-relay:local
+    ports:
+      - "127.0.0.1:8100:8000"
+    environment:
+      RELAY_DATABASE_URL: postgresql+psycopg://relay:${POSTGRES_PASSWORD:?Run scripts/setup-local.sh first}@postgres:5432/relay
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_DB: relay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/setup-local.sh first}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U relay -d relay"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  postgres-data:
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${RELAY_COMPOSE_SUBNET:-172.29.0.0/24}
