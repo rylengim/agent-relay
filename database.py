@@ -1,9 +1,7 @@
-"""SQLite database setup and durable Agent Relay models.
+"""PostgreSQL/SQLite setup and durable Agent Relay models.
 
-This module is intentionally the only place that knows about SQLite connection
-pragmas and its writer-lock transaction.  The rest of the application talks to
-the models through :mod:`storage`; replacing this module with a PostgreSQL
-engine and a row-locking claim transaction is the planned student exercise.
+PostgreSQL uses row locks; SQLite retains its writer reservation for local use.
+Every lease operation locks its task before reading or changing attempts.
 """
 
 from __future__ import annotations
@@ -19,7 +17,13 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, rela
 
 
 def _database_url() -> str:
-    return os.getenv("RELAY_DATABASE_URL") or os.getenv("DATABASE_URL") or "sqlite:///./agent-relay.db"
+    url = os.getenv("RELAY_DATABASE_URL") or os.getenv("DATABASE_URL") or "sqlite:///./agent-relay.db"
+    # Hosts commonly supply either spelling without a driver. Use psycopg 3,
+    # the project's installed driver, instead of SQLAlchemy's psycopg2 default.
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
 
 
 def positive_int(name: str, default: int) -> int:
@@ -44,7 +48,7 @@ def utcnow() -> datetime:
 
 
 def as_db_time(value: datetime) -> datetime:
-    """SQLite's DateTime implementation is most portable with naive UTC."""
+    """Store naive UTC consistently in both databases' timestamp columns."""
 
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
@@ -159,7 +163,13 @@ SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False,
 
 
 def init_db() -> None:
-    Base.metadata.create_all(engine)
+    # Multiple API replicas may start on an empty database together. Serialize
+    # schema creation as well as its existence check; create_all alone races.
+    with immediate_transaction() as db:
+        connection = db.connection()
+        if connection.dialect.name == "postgresql":
+            connection.exec_driver_sql("SELECT pg_advisory_xact_lock(1095912537)")
+        Base.metadata.create_all(connection)
 
 
 @contextmanager
@@ -177,19 +187,21 @@ def db_session() -> Generator[Session, None, None]:
 
 @contextmanager
 def immediate_transaction() -> Generator[Session, None, None]:
-    """Run one SQLite writer transaction before selecting or changing work.
+    """Run an atomic write, with row locks requested by PostgreSQL callers.
 
-    SQLite does not support PostgreSQL's ``FOR UPDATE SKIP LOCKED``.  A
-    ``BEGIN IMMEDIATE`` writer reservation serializes claims (and recovery or
-    terminal submissions) across API processes, giving each task one active
-    lease.  This is the intentionally isolated seam for a future PostgreSQL
-    implementation.
+    SQLite ignores ``FOR UPDATE`` and instead reserves the writer before any
+    read. PostgreSQL starts an ordinary transaction, allowing unrelated task
+    rows to progress concurrently. The existing name keeps the storage API
+    compatible with the starter.
     """
 
     connection = engine.connect()
     session = Session(bind=connection, expire_on_commit=False, autoflush=True)
     try:
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        if connection.dialect.name == "sqlite":
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        else:
+            connection.begin()
         yield session
         session.flush()
         connection.commit()
@@ -202,32 +214,49 @@ def immediate_transaction() -> Generator[Session, None, None]:
 
 
 def recover_expired_in_session(db: Session, now: datetime) -> int:
-    """Expire active leases and requeue/fail their tasks within ``db``."""
+    """Expire leases while holding the same task lock used by every writer.
+
+    Skip busy tasks so recovery never waits behind a heartbeat or completion.
+    Re-read the attempt after locking: the initial candidate scan may have
+    observed a lease just before a concurrent heartbeat committed its renewal.
+    """
 
     now_db = as_db_time(now)
-    expired = list(
+    tasks = list(
         db.scalars(
-            select(Attempt)
-            .where(Attempt.outcome == "processing", Attempt.lease_expires_at <= now_db)
-            .order_by(Attempt.lease_expires_at, Attempt.id)
+            select(Task)
+            .where(
+                Task.status == "processing",
+                Task.attempts.any(
+                    (Attempt.outcome == "processing") & (Attempt.lease_expires_at <= now_db)
+                ),
+            )
+            .order_by(Task.id)
+            .with_for_update(skip_locked=True)
         )
     )
     count = 0
-    for attempt in expired:
-        task = db.get(Task, attempt.task_id)
-        if task is None or attempt.outcome != "processing":
+    for task in tasks:
+        attempt = db.scalar(
+            select(Attempt).where(
+                Attempt.task_id == task.id,
+                Attempt.attempt_number == task.attempt_count,
+                Attempt.outcome == "processing",
+                Attempt.lease_expires_at <= now_db,
+            )
+        )
+        if attempt is None:
             continue
         attempt.outcome = "expired"
         attempt.finished_at = now_db
-        if task.status == "processing":
-            if task.attempt_count >= MAX_ATTEMPTS:
-                task.status = "failed"
-                task.error = "attempts_exhausted"
-                task.output = None
-                task.finished_at = now_db
-            else:
-                task.status = "queued"
-                task.finished_at = None
+        if task.attempt_count >= MAX_ATTEMPTS:
+            task.status = "failed"
+            task.error = "attempts_exhausted"
+            task.output = None
+            task.finished_at = now_db
+        else:
+            task.status = "queued"
+            task.finished_at = None
         count += 1
     return count
 
